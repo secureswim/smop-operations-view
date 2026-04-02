@@ -1,4 +1,5 @@
 import prisma from '../config/database';
+import { Prisma } from '@prisma/client';
 
 interface AuditLogEntry {
   actorId?: string;
@@ -20,7 +21,7 @@ export async function writeAuditLog(entry: AuditLogEntry): Promise<void> {
         action: entry.action,
         entityType: entry.entityType,
         entityId: entry.entityId,
-        metadata: entry.metadata ?? undefined,
+        metadata: (entry.metadata ?? undefined) as Prisma.InputJsonValue | undefined,
         ipAddress: entry.ipAddress,
       },
     });

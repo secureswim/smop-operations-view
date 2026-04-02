@@ -34,7 +34,8 @@ export class MaterialsService {
         throw new NotFoundError('PurchaseOrder', input.purchaseOrderId);
       }
 
-      if (![PurchaseOrderStatus.APPROVED, PurchaseOrderStatus.SENT_TO_SUPPLIER, PurchaseOrderStatus.PARTIALLY_DELIVERED].includes(po.status)) {
+      const receivableStatuses: PurchaseOrderStatus[] = [PurchaseOrderStatus.APPROVED, PurchaseOrderStatus.SENT_TO_SUPPLIER, PurchaseOrderStatus.PARTIALLY_DELIVERED];
+      if (!receivableStatuses.includes(po.status)) {
         throw new AppError(`Cannot receive materials for PO in '${po.status}' status`);
       }
 
