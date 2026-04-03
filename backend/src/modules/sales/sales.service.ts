@@ -2,7 +2,8 @@ import prisma from '../../config/database';
 import { PaginationParams } from '../../types';
 import { generateSequenceNumber } from '../../utils/sequence';
 import { writeAuditLog } from '../../utils/auditLogger';
-import { CustomerEnquiryStatus, CustomerQuotationStatus, CustomerOrderStatus, Prisma } from '@prisma/client';
+import { AppError } from '../../utils/errors';
+import { CustomerEnquiryStatus, CustomerQuotationStatus, CustomerOrderStatus, Prisma, BOMStatus } from '@prisma/client';
 import { CustomerEnquiryInput, GenerateQuotationInput, ConfirmOrderInput } from './sales.validator';
 
 export class SalesService {
@@ -39,6 +40,39 @@ export class SalesService {
     });
 
     return enquiry;
+  }
+
+  async listCustomerEnquiries(pagination: PaginationParams, filters: { search?: string; status?: string }) {
+    const where: Prisma.CustomerEnquiryWhereInput = {};
+
+    if (filters.status) {
+      where.status = filters.status as CustomerEnquiryStatus;
+    }
+    if (filters.search) {
+      where.OR = [
+        { enquiryNo: { contains: filters.search, mode: 'insensitive' } },
+        { customerName: { contains: filters.search, mode: 'insensitive' } },
+        { productName: { contains: filters.search, mode: 'insensitive' } },
+      ];
+    }
+
+    const [enquiries, total] = await Promise.all([
+      prisma.customerEnquiry.findMany({
+        where,
+        skip: pagination.skip,
+        take: pagination.limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          createdBy: { select: { id: true, fullName: true } },
+          quotations: {
+            select: { id: true, quotationNo: true, status: true, totalAmount: true },
+          },
+        },
+      }),
+      prisma.customerEnquiry.count({ where }),
+    ]);
+
+    return { enquiries, total };
   }
 
   // =========================================================================
@@ -114,11 +148,90 @@ export class SalesService {
     return quotation;
   }
 
+  async listCustomerQuotations(pagination: PaginationParams, filters: { search?: string; status?: string }) {
+    const where: Prisma.CustomerQuotationWhereInput = {};
+
+    if (filters.status) {
+      where.status = filters.status as CustomerQuotationStatus;
+    }
+    if (filters.search) {
+      where.OR = [
+        { quotationNo: { contains: filters.search, mode: 'insensitive' } },
+        { customerName: { contains: filters.search, mode: 'insensitive' } },
+        { productName: { contains: filters.search, mode: 'insensitive' } },
+      ];
+    }
+
+    const [quotations, total] = await Promise.all([
+      prisma.customerQuotation.findMany({
+        where,
+        skip: pagination.skip,
+        take: pagination.limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          enquiry: { select: { id: true, enquiryNo: true } },
+          items: true,
+          createdBy: { select: { id: true, fullName: true } },
+        },
+      }),
+      prisma.customerQuotation.count({ where }),
+    ]);
+
+    return { quotations, total };
+  }
+
   // =========================================================================
-  // ORDER CONFIRMATION
+  // ORDER CONFIRMATION — with feasibility gate
   // =========================================================================
 
   async confirmOrder(input: ConfirmOrderInput, userId: string) {
+    // Feasibility gate: find a BOM for this product and check inventory
+    const bom = await prisma.bOM.findFirst({
+      where: {
+        productName: { equals: input.productName, mode: 'insensitive' },
+        status: BOMStatus.ACTIVE,
+      },
+      include: {
+        items: {
+          include: { material: { select: { id: true, name: true, code: true, unit: true } } },
+        },
+      },
+      orderBy: { version: 'desc' },
+    });
+
+    if (bom) {
+      // Check feasibility
+      const materialIds = bom.items.map(item => item.materialId);
+      const inventoryRecords = await prisma.inventory.groupBy({
+        by: ['materialId'],
+        where: { materialId: { in: materialIds } },
+        _sum: { availableQty: true },
+      });
+
+      const inventoryMap = new Map<string, number>();
+      for (const inv of inventoryRecords) {
+        inventoryMap.set(inv.materialId, inv._sum.availableQty || 0);
+      }
+
+      const shortages: string[] = [];
+      for (const bomItem of bom.items) {
+        const requiredQty = bomItem.quantity * input.quantity;
+        const availableQty = inventoryMap.get(bomItem.materialId) || 0;
+        if (availableQty < requiredQty) {
+          shortages.push(
+            `${bomItem.material.name}: need ${requiredQty} ${bomItem.material.unit}, have ${availableQty}`,
+          );
+        }
+      }
+
+      if (shortages.length > 0) {
+        throw new AppError(
+          `Order cannot be confirmed — insufficient materials:\n${shortages.join('\n')}`,
+          422,
+        );
+      }
+    }
+
     const orderNo = await generateSequenceNumber('ORD', 'customerOrder');
 
     const order = await prisma.customerOrder.create({
@@ -151,12 +264,54 @@ export class SalesService {
       });
     }
 
+    // If BOM exists, consume inventory
+    if (bom) {
+      for (const bomItem of bom.items) {
+        const requiredQty = bomItem.quantity * input.quantity;
+
+        // Find inventory records for this material and consume
+        const inventories = await prisma.inventory.findMany({
+          where: { materialId: bomItem.materialId, availableQty: { gt: 0 } },
+          orderBy: { updatedAt: 'asc' },
+        });
+
+        let remaining = requiredQty;
+        for (const inv of inventories) {
+          if (remaining <= 0) break;
+          const consume = Math.min(remaining, inv.availableQty);
+          const newQty = inv.quantity - consume;
+          const newAvailable = inv.availableQty - consume;
+
+          await prisma.inventory.update({
+            where: { id: inv.id },
+            data: { quantity: newQty, availableQty: newAvailable },
+          });
+
+          await prisma.inventoryTransaction.create({
+            data: {
+              inventoryId: inv.id,
+              type: 'ISSUE',
+              quantity: -consume,
+              previousQty: inv.quantity,
+              newQty,
+              referenceType: 'CustomerOrder',
+              referenceId: order.id,
+              remarks: `Consumed for order ${orderNo}`,
+              performedById: userId,
+            },
+          });
+
+          remaining -= consume;
+        }
+      }
+    }
+
     await writeAuditLog({
       actorId: userId,
       action: 'CONFIRM_ORDER',
       entityType: 'CustomerOrder',
       entityId: order.id,
-      metadata: { orderNo, customerName: input.customerName, totalAmount: input.totalAmount },
+      metadata: { orderNo, customerName: input.customerName, totalAmount: input.totalAmount, feasibilityChecked: !!bom },
     });
 
     return order;

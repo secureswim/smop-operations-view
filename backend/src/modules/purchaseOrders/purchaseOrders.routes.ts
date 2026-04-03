@@ -3,7 +3,7 @@ import { purchaseOrdersController } from './purchaseOrders.controller';
 import { authenticate } from '../../middleware/auth';
 import { authorize } from '../../middleware/rbac';
 import { validate } from '../../middleware/validate';
-import { createPurchaseOrderSchema, updatePOStatusSchema } from './purchaseOrders.validator';
+import { createPurchaseOrderSchema, createFromQuotationSchema, updatePOStatusSchema } from './purchaseOrders.validator';
 import { UserRole } from '@prisma/client';
 
 const router = Router();
@@ -16,10 +16,23 @@ router.post(
   (req, res, next) => purchaseOrdersController.create(req, res, next),
 );
 
+router.post(
+  '/create-from-quotation',
+  authorize(UserRole.ADMINISTRATOR, UserRole.PURCHASE_HANDLER),
+  validate({ body: createFromQuotationSchema }),
+  (req, res, next) => purchaseOrdersController.createFromQuotation(req, res, next),
+);
+
 router.get(
   '/list',
   authorize(UserRole.ADMINISTRATOR, UserRole.PURCHASE_HANDLER, UserRole.STORES_HANDLER, UserRole.MANAGEMENT),
   (req, res, next) => purchaseOrdersController.list(req, res, next),
+);
+
+router.get(
+  '/:id',
+  authorize(UserRole.ADMINISTRATOR, UserRole.PURCHASE_HANDLER, UserRole.STORES_HANDLER, UserRole.MANAGEMENT),
+  (req, res, next) => purchaseOrdersController.getById(req, res, next),
 );
 
 router.put(

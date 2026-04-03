@@ -2,9 +2,30 @@ import prisma from '../../config/database';
 import { PaginationParams } from '../../types';
 import { generateSequenceNumber } from '../../utils/sequence';
 import { writeAuditLog } from '../../utils/auditLogger';
-import { NotFoundError } from '../../utils/errors';
-import { CreateEnquiryInput, AddQuotationInput } from './suppliers.validator';
+import { NotFoundError, AppError } from '../../utils/errors';
+import {
+  CreateEnquiryInput,
+  AddQuotationInput,
+  UpdateEnquiryStatusInput,
+  UpdateQuotationStatusInput,
+} from './suppliers.validator';
 import { EnquiryStatus, QuotationStatus, Prisma } from '@prisma/client';
+
+// Allowed enquiry status transitions
+const ENQUIRY_TRANSITIONS: Record<EnquiryStatus, EnquiryStatus[]> = {
+  DRAFT: [EnquiryStatus.SENT, EnquiryStatus.CLOSED],
+  SENT: [EnquiryStatus.RESPONDED, EnquiryStatus.CLOSED],
+  RESPONDED: [EnquiryStatus.CLOSED],
+  CLOSED: [],
+};
+
+// Allowed quotation status transitions
+const QUOTATION_TRANSITIONS: Record<QuotationStatus, QuotationStatus[]> = {
+  RECEIVED: [QuotationStatus.UNDER_REVIEW, QuotationStatus.REJECTED],
+  UNDER_REVIEW: [QuotationStatus.APPROVED, QuotationStatus.REJECTED],
+  APPROVED: [],
+  REJECTED: [],
+};
 
 export class SuppliersService {
   // =========================================================================
@@ -50,6 +71,79 @@ export class SuppliersService {
     return enquiry;
   }
 
+  async updateEnquiryStatus(input: UpdateEnquiryStatusInput, userId: string) {
+    const enquiry = await prisma.supplierEnquiry.findUnique({
+      where: { id: input.id },
+    });
+
+    if (!enquiry) {
+      throw new NotFoundError('SupplierEnquiry', input.id);
+    }
+
+    const newStatus = input.status as EnquiryStatus;
+    const allowed = ENQUIRY_TRANSITIONS[enquiry.status];
+
+    if (!allowed.includes(newStatus)) {
+      throw new AppError(
+        `Cannot transition enquiry from '${enquiry.status}' to '${newStatus}'. Allowed: ${allowed.join(', ') || 'none'}`,
+        422,
+      );
+    }
+
+    const updateData: Prisma.SupplierEnquiryUpdateInput = {
+      status: newStatus,
+      remarks: input.remarks ?? enquiry.remarks,
+    };
+
+    if (newStatus === EnquiryStatus.SENT) {
+      updateData.sentDate = new Date();
+    }
+
+    const updated = await prisma.supplierEnquiry.update({
+      where: { id: input.id },
+      data: updateData,
+      include: {
+        supplier: { select: { id: true, name: true } },
+        items: {
+          include: { material: { select: { id: true, name: true, code: true, unit: true } } },
+        },
+        createdBy: { select: { id: true, fullName: true } },
+      },
+    });
+
+    await writeAuditLog({
+      actorId: userId,
+      action: 'UPDATE_ENQUIRY_STATUS',
+      entityType: 'SupplierEnquiry',
+      entityId: enquiry.id,
+      metadata: { enquiryNo: enquiry.enquiryNo, fromStatus: enquiry.status, toStatus: newStatus },
+    });
+
+    return updated;
+  }
+
+  async getEnquiryById(id: string) {
+    const enquiry = await prisma.supplierEnquiry.findUnique({
+      where: { id },
+      include: {
+        supplier: { select: { id: true, name: true } },
+        items: {
+          include: { material: { select: { id: true, name: true, code: true, unit: true } } },
+        },
+        quotations: {
+          select: { id: true, quotationNo: true, status: true, totalAmount: true },
+        },
+        createdBy: { select: { id: true, fullName: true } },
+      },
+    });
+
+    if (!enquiry) {
+      throw new NotFoundError('SupplierEnquiry', id);
+    }
+
+    return enquiry;
+  }
+
   async listEnquiries(
     pagination: PaginationParams,
     filters: { search?: string; status?: string; supplierId?: string },
@@ -79,6 +173,9 @@ export class SuppliersService {
           supplier: { select: { id: true, name: true } },
           items: {
             include: { material: { select: { id: true, name: true, code: true, unit: true } } },
+          },
+          quotations: {
+            select: { id: true, quotationNo: true, status: true, totalAmount: true },
           },
           createdBy: { select: { id: true, fullName: true } },
         },
@@ -145,6 +242,52 @@ export class SuppliersService {
     });
 
     return quotation;
+  }
+
+  async updateQuotationStatus(input: UpdateQuotationStatusInput, userId: string) {
+    const quotation = await prisma.supplierQuotation.findUnique({
+      where: { id: input.id },
+    });
+
+    if (!quotation) {
+      throw new NotFoundError('SupplierQuotation', input.id);
+    }
+
+    const newStatus = input.status as QuotationStatus;
+    const allowed = QUOTATION_TRANSITIONS[quotation.status];
+
+    if (!allowed.includes(newStatus)) {
+      throw new AppError(
+        `Cannot transition quotation from '${quotation.status}' to '${newStatus}'. Allowed: ${allowed.join(', ') || 'none'}`,
+        422,
+      );
+    }
+
+    const updated = await prisma.supplierQuotation.update({
+      where: { id: input.id },
+      data: {
+        status: newStatus,
+        remarks: input.remarks ?? quotation.remarks,
+      },
+      include: {
+        supplier: { select: { id: true, name: true } },
+        enquiry: { select: { id: true, enquiryNo: true } },
+        items: {
+          include: { material: { select: { id: true, name: true, code: true, unit: true } } },
+        },
+        createdBy: { select: { id: true, fullName: true } },
+      },
+    });
+
+    await writeAuditLog({
+      actorId: userId,
+      action: 'UPDATE_QUOTATION_STATUS',
+      entityType: 'SupplierQuotation',
+      entityId: quotation.id,
+      metadata: { quotationNo: quotation.quotationNo, fromStatus: quotation.status, toStatus: newStatus },
+    });
+
+    return updated;
   }
 
   async listQuotations(

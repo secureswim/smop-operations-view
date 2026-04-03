@@ -39,7 +39,7 @@ async function apiFetch<T = unknown>(
   const url = `${API_BASE}${path}`;
 
   const res = await fetch(url, {
-    credentials: 'include', // send HTTP-only cookie
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       ...options.headers,
@@ -63,7 +63,6 @@ async function apiFetch<T = unknown>(
   return json;
 }
 
-// Convenience helpers
 async function get<T>(path: string): Promise<ApiResponse<T>> {
   return apiFetch<T>(path, { method: 'GET' });
 }
@@ -133,7 +132,7 @@ export interface ListParams {
 }
 
 export const suppliersApi = {
-  list: () => get<Array<{ id: string; name: string; code: string; contactPerson?: string }>>('/suppliers/list'),
+  list: () => get<Array<{ id: string; name: string; contactPerson?: string; email?: string; phone?: string }>>('/suppliers/list'),
 
   createEnquiry: (data: {
     supplierId: string;
@@ -143,6 +142,12 @@ export const suppliersApi = {
 
   listEnquiries: (params?: ListParams) =>
     get<unknown[]>(`/suppliers/enquiry/list${qs(params as Record<string, string | number | undefined> || {})}`),
+
+  getEnquiry: (id: string) =>
+    get<unknown>(`/suppliers/enquiry/${id}`),
+
+  updateEnquiryStatus: (data: { id: string; status: string; remarks?: string }) =>
+    put('/suppliers/enquiry/update-status', data),
 
   addQuotation: (data: {
     supplierId: string;
@@ -155,6 +160,9 @@ export const suppliersApi = {
 
   listQuotations: (params?: ListParams) =>
     get<unknown[]>(`/suppliers/quotation/list${qs(params as Record<string, string | number | undefined> || {})}`),
+
+  updateQuotationStatus: (data: { id: string; status: string; remarks?: string }) =>
+    put('/suppliers/quotation/update-status', data),
 };
 
 // -----------------------------------------------------------------------------
@@ -164,13 +172,23 @@ export const suppliersApi = {
 export const purchaseOrdersApi = {
   create: (data: {
     supplierId: string;
+    quotationId?: string;
     expectedDate?: string;
     remarks?: string;
     items: Array<{ materialId: string; quantity: number; unitPrice: number; unit?: string }>;
   }) => post('/purchase-order/create', data),
 
+  createFromQuotation: (data: {
+    quotationId: string;
+    expectedDate?: string;
+    remarks?: string;
+  }) => post('/purchase-order/create-from-quotation', data),
+
   list: (params?: ListParams) =>
     get<unknown[]>(`/purchase-order/list${qs(params as Record<string, string | number | undefined> || {})}`),
+
+  getById: (id: string) =>
+    get<unknown>(`/purchase-order/${id}`),
 
   updateStatus: (data: { id: string; status: string; remarks?: string }) =>
     put('/purchase-order/update-status', data),
@@ -183,25 +201,25 @@ export const purchaseOrdersApi = {
 export const materialsApi = {
   list: () => get<Array<{ id: string; name: string; code: string; unit?: string; type?: string }>>('/material/list'),
 
-  locations: () => get<Array<{ id: string; name: string; code: string }>>('/material/locations'),
+  locations: () => get<Array<{ id: string; name: string; code?: string }>>('/material/locations'),
 
   recordReceipt: (data: {
     purchaseOrderId: string;
-    items: Array<{ materialId: string; quantity: number; unit?: string; remarks?: string }>;
+    items: Array<{ materialId: string; quantity: number; unit?: string; remarks?: string; batchNumber?: string }>;
     remarks?: string;
   }) => post('/material/receipt', data),
 
   recordInspection: (data: {
-    receiptId: string;
-    items: Array<{
-      receiptItemId: string;
-      status: 'ACCEPTED' | 'REJECTED' | 'PARTIAL';
-      acceptedQuantity: number;
-      rejectedQuantity?: number;
-      remarks?: string;
-    }>;
+    batchId: string;
+    result: 'ACCEPTED' | 'REJECTED' | 'PARTIALLY_ACCEPTED';
+    inspectedQty: number;
+    acceptedQty: number;
+    rejectedQty?: number;
     remarks?: string;
   }) => post('/material/inspection', data),
+
+  listReceipts: (params?: ListParams & { purchaseOrderId?: string }) =>
+    get<unknown[]>(`/material/receipts${qs(params as Record<string, string | number | undefined> || {})}`),
 
   createBatch: (data: {
     inspectionId: string;
@@ -221,7 +239,7 @@ export const inventoryApi = {
   view: (params?: ListParams & { type?: string; locationId?: string }) =>
     get<unknown[]>(`/inventory/view${qs(params as Record<string, string | number | undefined> || {})}`),
 
-  updateLocation: (data: { inventoryId: string; locationId: string; quantity: number; remarks?: string }) =>
+  updateLocation: (data: { inventoryId: string; newLocationId: string; quantity: number; remarks?: string }) =>
     put('/inventory/update-location', data),
 };
 
@@ -293,6 +311,9 @@ export const salesApi = {
     remarks?: string;
   }) => post('/customer/enquiry', data),
 
+  listEnquiries: (params?: ListParams) =>
+    get<unknown[]>(`/customer/enquiry/list${qs(params as Record<string, string | number | undefined> || {})}`),
+
   generateQuotation: (data: {
     enquiryId?: string;
     customerName: string;
@@ -302,6 +323,9 @@ export const salesApi = {
     validUntil?: string;
     remarks?: string;
   }) => post('/quotation/generate', data),
+
+  listQuotations: (params?: ListParams) =>
+    get<unknown[]>(`/quotation/list${qs(params as Record<string, string | number | undefined> || {})}`),
 
   confirmOrder: (data: {
     quotationId?: string;

@@ -1,13 +1,9 @@
 import { Response, NextFunction } from 'express';
 import { suppliersService } from './suppliers.service';
 import { AuthenticatedRequest } from '../../types';
-import { sendSuccess } from '../../utils/response';
-import { parsePagination, buildPaginationMeta } from '../../utils/response';
+import { sendSuccess, parsePagination, buildPaginationMeta } from '../../utils/response';
 
 export class SuppliersController {
-  /**
-   * POST /api/suppliers/enquiry/create
-   */
   async createEnquiry(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const enquiry = await suppliersService.createEnquiry(req.body, req.user!.userId);
@@ -17,9 +13,25 @@ export class SuppliersController {
     }
   }
 
-  /**
-   * GET /api/suppliers/enquiry/list
-   */
+  async updateEnquiryStatus(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await suppliersService.updateEnquiryStatus(req.body, req.user!.userId);
+      sendSuccess(res, result, 'Enquiry status updated');
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  async getEnquiry(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = req.params.id as string;
+      const enquiry = await suppliersService.getEnquiryById(id);
+      sendSuccess(res, enquiry);
+    } catch (err) {
+      next(err);
+    }
+  }
+
   async listEnquiries(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const pagination = parsePagination(req.query as any);
@@ -32,9 +44,6 @@ export class SuppliersController {
     }
   }
 
-  /**
-   * POST /api/suppliers/quotation/add
-   */
   async addQuotation(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const quotation = await suppliersService.addQuotation(req.body, req.user!.userId);
@@ -44,9 +53,15 @@ export class SuppliersController {
     }
   }
 
-  /**
-   * GET /api/suppliers/quotation/list
-   */
+  async updateQuotationStatus(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await suppliersService.updateQuotationStatus(req.body, req.user!.userId);
+      sendSuccess(res, result, 'Quotation status updated');
+    } catch (err) {
+      next(err);
+    }
+  }
+
   async listQuotations(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const pagination = parsePagination(req.query as any);
@@ -59,9 +74,6 @@ export class SuppliersController {
     }
   }
 
-  /**
-   * GET /api/suppliers/list
-   */
   async listSuppliers(_req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const suppliers = await suppliersService.listSuppliers();

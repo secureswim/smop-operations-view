@@ -69,6 +69,18 @@ export class MaterialsController {
       next(err);
     }
   }
+
+  async listReceipts(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const pagination = parsePagination(req.query as any);
+      const { status, purchaseOrderId } = req.query as any;
+      const { receipts, total } = await materialsService.listReceipts(pagination, { status, purchaseOrderId });
+      const meta = buildPaginationMeta(total, pagination);
+      sendSuccess(res, receipts, undefined, 200, meta);
+    } catch (err) {
+      next(err);
+    }
+  }
 }
 
 export const materialsController = new MaterialsController();

@@ -509,6 +509,52 @@ export class MaterialsService {
       select: { id: true, name: true, code: true, unit: true, type: true },
     });
   }
+
+  // =========================================================================
+  // RECEIPTS LISTING
+  // =========================================================================
+
+  async listReceipts(pagination: PaginationParams, filters: { status?: string; purchaseOrderId?: string }) {
+    const where: Prisma.MaterialReceiptWhereInput = {};
+
+    if (filters.status) {
+      where.status = filters.status as ReceiptStatus;
+    }
+    if (filters.purchaseOrderId) {
+      where.purchaseOrderId = filters.purchaseOrderId;
+    }
+
+    const [receipts, total] = await Promise.all([
+      prisma.materialReceipt.findMany({
+        where,
+        skip: pagination.skip,
+        take: pagination.limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          purchaseOrder: {
+            select: { id: true, poNumber: true, supplier: { select: { id: true, name: true } } },
+          },
+          items: {
+            include: {
+              batch: {
+                include: {
+                  material: { select: { id: true, name: true, code: true, unit: true } },
+                  inspections: {
+                    select: { id: true, result: true, inspectedQty: true, acceptedQty: true, rejectedQty: true },
+                  },
+                },
+              },
+            },
+          },
+          receivedBy: { select: { id: true, fullName: true } },
+        },
+      }),
+      prisma.materialReceipt.count({ where }),
+    ]);
+
+    return { receipts, total };
+  }
 }
 
 export const materialsService = new MaterialsService();
+

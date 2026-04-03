@@ -3,7 +3,13 @@ import { suppliersController } from './suppliers.controller';
 import { authenticate } from '../../middleware/auth';
 import { authorize } from '../../middleware/rbac';
 import { validate } from '../../middleware/validate';
-import { createEnquirySchema, addQuotationSchema, listQuerySchema } from './suppliers.validator';
+import {
+  createEnquirySchema,
+  addQuotationSchema,
+  updateEnquiryStatusSchema,
+  updateQuotationStatusSchema,
+  listQuerySchema,
+} from './suppliers.validator';
 import { UserRole } from '@prisma/client';
 
 const router = Router();
@@ -29,6 +35,19 @@ router.get(
   (req, res, next) => suppliersController.listEnquiries(req, res, next),
 );
 
+router.get(
+  '/enquiry/:id',
+  authorize(UserRole.ADMINISTRATOR, UserRole.PURCHASE_HANDLER, UserRole.MANAGEMENT),
+  (req, res, next) => suppliersController.getEnquiry(req, res, next),
+);
+
+router.put(
+  '/enquiry/update-status',
+  authorize(UserRole.ADMINISTRATOR, UserRole.PURCHASE_HANDLER),
+  validate({ body: updateEnquiryStatusSchema }),
+  (req, res, next) => suppliersController.updateEnquiryStatus(req, res, next),
+);
+
 // Quotation routes
 router.post(
   '/quotation/add',
@@ -42,6 +61,13 @@ router.get(
   authorize(UserRole.ADMINISTRATOR, UserRole.PURCHASE_HANDLER, UserRole.MANAGEMENT),
   validate({ query: listQuerySchema }),
   (req, res, next) => suppliersController.listQuotations(req, res, next),
+);
+
+router.put(
+  '/quotation/update-status',
+  authorize(UserRole.ADMINISTRATOR, UserRole.PURCHASE_HANDLER),
+  validate({ body: updateQuotationStatusSchema }),
+  (req, res, next) => suppliersController.updateQuotationStatus(req, res, next),
 );
 
 export default router;

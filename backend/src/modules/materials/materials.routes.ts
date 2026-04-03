@@ -50,4 +50,11 @@ router.get(
   (req, res, next) => materialsController.listLocations(req, res, next),
 );
 
+// Receipts list
+router.get(
+  '/receipts',
+  authorize(UserRole.ADMINISTRATOR, UserRole.STORES_HANDLER, UserRole.PURCHASE_HANDLER),
+  (req, res, next) => materialsController.listReceipts(req, res, next),
+);
+
 export default router;

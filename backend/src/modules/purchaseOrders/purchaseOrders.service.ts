@@ -3,8 +3,8 @@ import { PaginationParams } from '../../types';
 import { generateSequenceNumber } from '../../utils/sequence';
 import { writeAuditLog } from '../../utils/auditLogger';
 import { NotFoundError, AppError } from '../../utils/errors';
-import { CreatePurchaseOrderInput, UpdatePOStatusInput } from './purchaseOrders.validator';
-import { PurchaseOrderStatus, Prisma } from '@prisma/client';
+import { CreatePurchaseOrderInput, CreateFromQuotationInput, UpdatePOStatusInput } from './purchaseOrders.validator';
+import { PurchaseOrderStatus, QuotationStatus, Prisma } from '@prisma/client';
 
 // Allowed PO status transitions
 const ALLOWED_TRANSITIONS: Record<PurchaseOrderStatus, PurchaseOrderStatus[]> = {
@@ -20,6 +20,22 @@ const ALLOWED_TRANSITIONS: Record<PurchaseOrderStatus, PurchaseOrderStatus[]> = 
 
 export class PurchaseOrdersService {
   async createPurchaseOrder(input: CreatePurchaseOrderInput, userId: string) {
+    // If quotationId is provided, validate it's APPROVED
+    if (input.quotationId) {
+      const quotation = await prisma.supplierQuotation.findUnique({
+        where: { id: input.quotationId },
+      });
+      if (!quotation) {
+        throw new NotFoundError('SupplierQuotation', input.quotationId);
+      }
+      if (quotation.status !== QuotationStatus.APPROVED) {
+        throw new AppError(
+          `Cannot create PO from quotation with status '${quotation.status}'. Only APPROVED quotations can be used.`,
+          422,
+        );
+      }
+    }
+
     const poNumber = await generateSequenceNumber('PO', 'purchaseOrder');
     const totalAmount = input.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
 
@@ -62,6 +78,100 @@ export class PurchaseOrdersService {
     return po;
   }
 
+  async createFromQuotation(input: CreateFromQuotationInput, userId: string) {
+    const quotation = await prisma.supplierQuotation.findUnique({
+      where: { id: input.quotationId },
+      include: {
+        items: {
+          include: { material: { select: { id: true, name: true, code: true, unit: true } } },
+        },
+        supplier: { select: { id: true, name: true } },
+      },
+    });
+
+    if (!quotation) {
+      throw new NotFoundError('SupplierQuotation', input.quotationId);
+    }
+
+    if (quotation.status !== QuotationStatus.APPROVED) {
+      throw new AppError(
+        `Cannot create PO from quotation with status '${quotation.status}'. Only APPROVED quotations are allowed.`,
+        422,
+      );
+    }
+
+    const poNumber = await generateSequenceNumber('PO', 'purchaseOrder');
+    const totalAmount = quotation.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+
+    const po = await prisma.purchaseOrder.create({
+      data: {
+        poNumber,
+        supplierId: quotation.supplierId,
+        status: PurchaseOrderStatus.DRAFT,
+        totalAmount,
+        expectedDate: input.expectedDate ? new Date(input.expectedDate) : null,
+        remarks: input.remarks || `Created from quotation ${quotation.quotationNo}`,
+        createdById: userId,
+        items: {
+          create: quotation.items.map(item => ({
+            materialId: item.materialId,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            totalPrice: item.quantity * item.unitPrice,
+            unit: item.unit || 'pcs',
+          })),
+        },
+      },
+      include: {
+        supplier: { select: { id: true, name: true } },
+        items: {
+          include: { material: { select: { id: true, name: true, code: true, unit: true } } },
+        },
+        createdBy: { select: { id: true, fullName: true } },
+      },
+    });
+
+    await writeAuditLog({
+      actorId: userId,
+      action: 'CREATE_PO_FROM_QUOTATION',
+      entityType: 'PurchaseOrder',
+      entityId: po.id,
+      metadata: { poNumber, quotationNo: quotation.quotationNo, supplierId: quotation.supplierId, totalAmount },
+    });
+
+    return po;
+  }
+
+  async getById(id: string) {
+    const po = await prisma.purchaseOrder.findUnique({
+      where: { id },
+      include: {
+        supplier: { select: { id: true, name: true } },
+        items: {
+          include: { material: { select: { id: true, name: true, code: true, unit: true } } },
+        },
+        receipts: {
+          select: {
+            id: true,
+            receiptNo: true,
+            status: true,
+            createdAt: true,
+            items: {
+              select: { batchId: true, quantity: true },
+            },
+          },
+        },
+        createdBy: { select: { id: true, fullName: true } },
+      },
+    });
+
+    if (!po) {
+      throw new NotFoundError('PurchaseOrder', id);
+    }
+
+    return po;
+  }
+
   async listPurchaseOrders(
     pagination: PaginationParams,
     filters: { search?: string; status?: string; supplierId?: string },
@@ -91,6 +201,14 @@ export class PurchaseOrdersService {
           supplier: { select: { id: true, name: true } },
           items: {
             include: { material: { select: { id: true, name: true, code: true, unit: true } } },
+          },
+          receipts: {
+            select: {
+              id: true,
+              receiptNo: true,
+              status: true,
+              items: { select: { batchId: true, quantity: true } },
+            },
           },
           createdBy: { select: { id: true, fullName: true } },
         },

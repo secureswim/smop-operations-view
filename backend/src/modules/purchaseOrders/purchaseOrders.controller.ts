@@ -13,6 +13,25 @@ export class PurchaseOrdersController {
     }
   }
 
+  async createFromQuotation(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const po = await purchaseOrdersService.createFromQuotation(req.body, req.user!.userId);
+      sendSuccess(res, po, 'Purchase order created from quotation', 201);
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  async getById(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = req.params.id as string;
+      const po = await purchaseOrdersService.getById(id);
+      sendSuccess(res, po);
+    } catch (err) {
+      next(err);
+    }
+  }
+
   async list(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const pagination = parsePagination(req.query as any);
@@ -27,8 +46,8 @@ export class PurchaseOrdersController {
 
   async updateStatus(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const po = await purchaseOrdersService.updateStatus(req.body, req.user!.userId);
-      sendSuccess(res, po, 'Purchase order status updated');
+      const updated = await purchaseOrdersService.updateStatus(req.body, req.user!.userId);
+      sendSuccess(res, updated, 'PO status updated');
     } catch (err) {
       next(err);
     }

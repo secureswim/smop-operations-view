@@ -17,12 +17,24 @@ router.post(
   (req, res, next) => salesController.createEnquiry(req, res, next),
 );
 
+router.get(
+  '/customer/enquiry/list',
+  authorize(UserRole.ADMINISTRATOR, UserRole.SALES_HANDLER, UserRole.MANAGEMENT),
+  (req, res, next) => salesController.listEnquiries(req, res, next),
+);
+
 // Quotation generation
 router.post(
   '/quotation/generate',
   authorize(UserRole.ADMINISTRATOR, UserRole.SALES_HANDLER),
   validate({ body: generateQuotationSchema }),
   (req, res, next) => salesController.generateQuotation(req, res, next),
+);
+
+router.get(
+  '/quotation/list',
+  authorize(UserRole.ADMINISTRATOR, UserRole.SALES_HANDLER, UserRole.MANAGEMENT),
+  (req, res, next) => salesController.listQuotations(req, res, next),
 );
 
 // Order confirmation
